@@ -31,4 +31,4 @@ node scripts/web-server.js --port 4000
 
 ![Interface Web Moderne](ReadMe-Image/Capture%20d%E2%80%99%C3%A9cran%20du%202025-10-06%2016-41-04.png)
 
-https://www.star-history.com/#KirobotDev/Gemini-Cli.git&Date
+[EHEH](https://www.star-history.com/#KirobotDev/Gemini-Cli.git&Date)
