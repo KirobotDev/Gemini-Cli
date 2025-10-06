@@ -33,4 +33,4 @@ node scripts/web-server.js --port 4000
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=aiko-chan-ai/discord.js-selfbot-v13&type=Date)](https://www.star-history.com/#KirobotDev/Gemini-Cli&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=KirobotDev/Gemini-Cli&type=Date)](https://www.star-history.com/#KirobotDev/Gemini-Cli&Date)
