@@ -29,7 +29,7 @@ node scripts/web-server.js --port 4000
 
 ## 📸 Démonstration
 
-https://i.postimg.cc/pdmhcm9B/Capture-d-cran-du-2025-10-06-22-32-15.png
+![Interface Web Moderne](https://i.postimg.cc/pdmhcm9B/Capture-d-cran-du-2025-10-06-22-32-15.png)
 
 ## Star History
 
