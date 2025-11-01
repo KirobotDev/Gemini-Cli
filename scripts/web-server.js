@@ -1,35 +1,39 @@
 #!/usr/bin/env node
 /**
- * Minimal HTTP server to expose the bundled Gemini CLI as a web endpoint.
- * - GET / serves a tiny web UI
- * - POST /api/prompt with JSON { prompt: string } invokes the bundled CLI and returns the output
- * - https://kirosb.fr For Dev Project
+ * Serveur HTTP optimisé pour une exécution rapide de la CLI Gemini.
+ * - GET / : sert l'UI web avec le CSS original
+ * - POST /api/prompt : exécute la CLI avec un pool de processus pour des réponses rapides
+ * - https://kirosb.fr pour le projet de dev
  */
 import { createServer } from 'node:http';
-import { spawn } from 'node:child_process';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { createGzip } from 'node:zlib';
+import { pipeline } from 'node:stream/promises';
+import workerpool from 'workerpool';
+import { LRUCache } from 'lru-cache';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const bundlePath = join(__dirname, '..', 'bundle', 'gemini.js');
 
-const DEFAULT_PORT = parseInt(process.env.PORT || '3000', 10);
+const CONFIG = {
+  PORT: parseInt(process.env.PORT || '3000', 10),
+  CLI_TIMEOUT_MS: parseInt(process.env.CLI_TIMEOUT_MS || '10000', 10), 
+  MAX_PROMPT_LENGTH: 5000, 
+  CACHE_SIZE: 100, 
+};
 
-function sendJson(res, code, obj) {
-  const body = JSON.stringify(obj);
-  res.writeHead(code, {
-    'Content-Type': 'application/json; charset=utf-8',
-    'Content-Length': Buffer.byteLength(body),
-    'Access-Control-Allow-Origin': '*',
-    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
-    'Access-Control-Allow-Headers': 'Content-Type',
-  });
-  res.end(body);
-}
+const cache = new LRUCache({
+  max: CONFIG.CACHE_SIZE,
+  ttl: 60 * 60 * 1000, 
+});
 
-function serveIndex(res) {
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-  res.end(`<!DOCTYPE html>
+const pool = workerpool.pool(bundlePath, {
+  maxWorkers: 4, 
+  workerType: 'process',
+});
+
+const INDEX_HTML = `<!DOCTYPE html>
 <html lang="en">
 <head>
   <meta charset="utf-8" />
@@ -175,7 +179,6 @@ function serveIndex(res) {
 </head>
 <body class="min-h-screen bg-gradient-to-br from-slate-50 via-blue-50 to-slate-100 dark:from-gray-900 dark:via-blue-950 dark:to-gray-900 transition-all">
   <div class="absolute inset-0 bg-[linear-gradient(to_right,#8080800a_1px,transparent_1px),linear-gradient(to_bottom,#8080800a_1px,transparent_1px)] bg-[size:24px_24px]"></div>
-
   <div class="relative z-10 min-h-screen flex flex-col">
     <header class="px-6 py-8 md:py-12 animate-in slide-in-from-top-4 duration-300">
       <div class="max-w-4xl mx-auto">
@@ -196,7 +199,6 @@ function serveIndex(res) {
         <p class="text-slate-600 dark:text-slate-300 text-lg ml-14">Gemini Ai Web Ui By Xql.dev</p>
       </div>
     </header>
-
     <main class="flex-1 px-6 pb-12">
       <div class="max-w-4xl mx-auto space-y-6">
         <div class="bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-slate-900/50 border border-slate-200/50 dark:border-gray-700/50 p-6 md:p-8 transition-all duration-300 hover:shadow-2xl hover:shadow-slate-200/60 dark:hover:shadow-slate-900/60 animate-in fade-in duration-500">
@@ -226,7 +228,6 @@ function serveIndex(res) {
             </button>
           </div>
         </div>
-
         <div id="error" class="hidden bg-red-50/80 dark:bg-red-900/80 backdrop-blur-sm border border-red-200 dark:border-red-700 rounded-2xl p-6 shadow-lg animate-in fade-in slide-in-from-top-4 duration-300">
           <div class="flex items-start gap-3">
             <svg class="w-5 h-5 text-red-600 dark:text-red-400 flex-shrink-0 mt-0.5" fill="currentColor" viewBox="0 0 20 20">
@@ -238,7 +239,6 @@ function serveIndex(res) {
             </div>
           </div>
         </div>
-
         <div id="output" class="hidden bg-white/80 dark:bg-gray-800/80 backdrop-blur-sm rounded-2xl shadow-xl shadow-slate-200/50 dark:shadow-slate-900/50 border border-slate-200/50 dark:border-gray-700/50 p-6 md:p-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
           <h3 class="text-lg font-semibold text-slate-900 dark:text-slate-100 mb-4 flex items-center gap-2">
             <div class="w-1.5 h-6 bg-gradient-to-b from-blue-500 to-blue-600 rounded-full"></div>
@@ -254,7 +254,6 @@ function serveIndex(res) {
             <pre id="output-text" class="text-sm text-slate-800 dark:text-slate-200 whitespace-pre-wrap font-mono leading-relaxed"></pre>
           </div>
         </div>
-
         <div id="placeholder" class="text-center py-12 animate-in fade-in duration-500">
           <div class="inline-flex p-4 bg-slate-100/50 dark:bg-gray-700/50 rounded-2xl mb-4">
             <svg class="w-8 h-8 text-slate-400 dark:text-slate-500" fill="currentColor" viewBox="0 0 24 24">
@@ -265,25 +264,19 @@ function serveIndex(res) {
         </div>
       </div>
     </main>
-
     <footer class="px-6 py-6 text-center text-sm text-slate-500 dark:text-slate-400 animate-in fade-in duration-500">
       <p>Powered by Gemini AI · Built with modern web technologies</p>
     </footer>
   </div>
-
   <script>
-    // Theme toggle functionality
     const themeToggle = document.getElementById('themeToggle');
     themeToggle.addEventListener('click', () => {
       document.documentElement.classList.toggle('dark');
       localStorage.setItem('theme', document.documentElement.classList.contains('dark') ? 'dark' : 'light');
     });
-    // Load saved theme
     if (localStorage.getItem('theme') === 'dark' || (!localStorage.getItem('theme') && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
       document.documentElement.classList.add('dark');
     }
-
-    // Run button and prompt handling
     const promptInput = document.getElementById('prompt');
     const runButton = document.getElementById('run');
     const runIcon = document.getElementById('run-icon');
@@ -295,10 +288,8 @@ function serveIndex(res) {
     const outputText = document.getElementById('output-text');
     const placeholder = document.getElementById('placeholder');
     const copyButton = document.getElementById('copy-button');
-
     runButton.addEventListener('click', async () => {
       if (!promptInput.value.trim() || runButton.disabled) return;
-
       runButton.disabled = true;
       runIcon.classList.add('hidden');
       loadingIcon.classList.remove('hidden');
@@ -306,7 +297,6 @@ function serveIndex(res) {
       errorDiv.classList.add('hidden');
       outputDiv.classList.add('hidden');
       placeholder.classList.add('hidden');
-
       try {
         const res = await fetch('/api/prompt', {
           method: 'POST',
@@ -331,15 +321,12 @@ function serveIndex(res) {
         runText.textContent = 'Run';
       }
     });
-
     promptInput.addEventListener('keydown', (e) => {
       if (e.key === 'Enter' && (e.metaKey || e.ctrlKey)) {
         e.preventDefault();
         runButton.click();
       }
     });
-
-    // Copy to clipboard functionality
     copyButton.addEventListener('click', () => {
       navigator.clipboard.writeText(outputText.textContent).then(() => {
         copyButton.classList.add('copied');
@@ -353,55 +340,89 @@ function serveIndex(res) {
     });
   </script>
 </body>
-</html>`);
+</html>`;
+
+function sendJson(res, code, obj) {
+  const body = JSON.stringify(obj);
+  res.writeHead(code, {
+    'Content-Type': 'application/json; charset=utf-8',
+    'Content-Encoding': 'gzip',
+    'Access-Control-Allow-Origin': '*',
+    'Access-Control-Allow-Methods': 'GET,POST,OPTIONS',
+    'Access-Control-Allow-Headers': 'Content-Type',
+    'ETag': require('crypto').createHash('md5').update(body).digest('hex'),
+  });
+  pipeline(
+    Buffer.from(body),
+    createGzip(),
+    res
+  ).catch((err) => {
+    console.error('Gzip error:', err);
+    res.writeHead(500);
+    res.end('Internal server error');
+  });
 }
 
-function parseJsonBody(req) {
+function serveIndex(res) {
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    'Content-Encoding': 'gzip',
+    'Cache-Control': 'public, max-age=3600',
+  });
+  pipeline(
+    Buffer.from(INDEX_HTML),
+    createGzip(),
+    res
+  ).catch((err) => {
+    console.error('Gzip error:', err);
+    res.writeHead(500);
+    res.end('Internal server error');
+  });
+}
+
+async function parseJsonBody(req) {
   return new Promise((resolve, reject) => {
     let raw = '';
-    req.on('data', (chunk) => (raw += chunk));
+    req.setEncoding('utf8');
+    req.on('data', (chunk) => {
+      if (raw.length > CONFIG.MAX_PROMPT_LENGTH) {
+        return reject(new Error('Prompt trop long'));
+      }
+      raw += chunk;
+    });
     req.on('end', () => {
       if (!raw) return resolve(null);
       try {
-        resolve(JSON.parse(raw));
+        const parsed = JSON.parse(raw);
+        if (typeof parsed.prompt !== 'string' || parsed.prompt.length > CONFIG.MAX_PROMPT_LENGTH) {
+          return reject(new Error('Prompt invalide ou trop long'));
+        }
+        resolve(parsed);
       } catch (e) {
-        reject(e);
+        reject(new Error('Erreur de parsing JSON'));
       }
     });
     req.on('error', reject);
   });
 }
 
-function invokeCli(prompt, timeoutMs = 30000) {
-  return new Promise((resolve, reject) => {
-    const command = process.execPath;
-    const args = [bundlePath, '--yolo', '--prompt', prompt];
-    const child = spawn(command, args, { stdio: ['ignore', 'pipe', 'pipe'] });
+async function invokeCli(prompt) {
+  const cacheKey = prompt.trim();
+  const cached = cache.get(cacheKey);
+  if (cached) {
+    return cached; 
+  }
 
-    let stdout = '';
-    let stderr = '';
-
-    const killTimer = setTimeout(() => {
-      child.kill('SIGTERM');
-    }, timeoutMs);
-
-    child.stdout.on('data', (b) => (stdout += b.toString()));
-    child.stderr.on('data', (b) => (stderr += b.toString()));
-
-    child.on('close', (code) => {
-      clearTimeout(killTimer);
-      if (code === 0) {
-        resolve({ stdout, stderr });
-      } else {
-        reject(new Error(`Process exited with code ${code}: ${stderr}`));
-      }
+  try {
+    const result = await pool.exec('main', ['--yolo', '--prompt', prompt], {
+      timeout: CONFIG.CLI_TIMEOUT_MS,
     });
-
-    child.on('error', (err) => {
-      clearTimeout(killTimer);
-      reject(err);
-    });
-  });
+    const output = { stdout: result.stdout || result, stderr: result.stderr || '' };
+    cache.set(cacheKey, output); // Met en cache
+    return output;
+  } catch (e) {
+    throw new Error(`Erreur CLI : ${e.message}`);
+  }
 }
 
 const server = createServer(async (req, res) => {
@@ -421,32 +442,32 @@ const server = createServer(async (req, res) => {
 
     if (req.method === 'POST' && req.url === '/api/prompt') {
       const body = await parseJsonBody(req);
-      if (!body || typeof body.prompt !== 'string') {
-        return sendJson(res, 400, { error: 'Missing prompt in request body' });
+      if (!body) {
+        return sendJson(res, 400, { error: 'Corps de requête manquant' });
       }
 
       try {
-        const result = await invokeCli(body.prompt, Number(process.env.CLI_TIMEOUT_MS || 30000));
+        const result = await invokeCli(body.prompt);
         return sendJson(res, 200, { output: result.stdout, stderr: result.stderr });
       } catch (e) {
-        return sendJson(res, 500, { error: String(e) });
+        console.error('Erreur CLI:', e);
+        return sendJson(res, 500, { error: `Exécution CLI échouée : ${e.message}` });
       }
     }
 
     res.writeHead(404, { 'Content-Type': 'text/plain' });
-    res.end('Not found');
+    res.end('Non trouvé');
   } catch (e) {
-    sendJson(res, 500, { error: String(e) });
+    console.error('Erreur serveur:', e);
+    sendJson(res, 500, { error: 'Erreur serveur interne' });
   }
 });
 
-const portArgIndex = process.argv.indexOf('--port');
-let port = DEFAULT_PORT;
-if (portArgIndex !== -1 && process.argv.length > portArgIndex + 1) {
-  const p = parseInt(process.argv[portArgIndex + 1], 10);
-  if (!Number.isNaN(p)) port = p;
-}
+server.listen(CONFIG.PORT, () => {
+  console.log(`Serveur Gemini CLI à l'écoute sur http://localhost:${CONFIG.PORT}/`);
+});
 
-server.listen(port, () => {
-  console.log(`Gemini CLI web server listening on http://localhost:${port}/`);
+process.on('SIGTERM', () => {
+  pool.terminate();
+  server.close(() => process.exit(0));
 });
