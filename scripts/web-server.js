@@ -3,6 +3,7 @@
  * Minimal HTTP server to expose the bundled Gemini CLI as a web endpoint.
  * - GET / serves a tiny web UI
  * - POST /api/prompt with JSON { prompt: string } invokes the bundled CLI and returns the output
+ * - https://kirosb.fr For Dev Project
  */
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
